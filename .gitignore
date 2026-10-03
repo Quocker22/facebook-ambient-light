@@ -1,0 +1,6 @@
+.DS_Store
+dist/
+*.zip
+# Local logo tooling: embeds third-party SVG sets, kept out of the repo
+store/icon-picker.html
+store/build_picker.py

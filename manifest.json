@@ -1,0 +1,43 @@
+{
+  "manifest_version": 3,
+  "name": "Ambient light for Facebook™",
+  "description": "Ambient glow behind photos and videos on Facebook, with a focus mode and detailed settings. Not affiliated with Meta.",
+  "version": "1.0.0",
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.facebook.com/*"
+      ],
+      "js": [
+        "settings.js",
+        "panel.js",
+        "hud.js",
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "permissions": [
+    "storage"
+  ],
+  "icons": {
+    "16": "images/icon-16.png",
+    "32": "images/icon-32.png",
+    "48": "images/icon-48.png",
+    "128": "images/icon-128.png"
+  },
+  "action": {
+    "default_title": "Ambient light settings",
+    "default_icon": {
+      "16": "images/icon-16.png",
+      "24": "images/icon-24.png",
+      "32": "images/icon-32.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "short_name": "Ambient light",
+  "minimum_chrome_version": "123",
+  "homepage_url": "https://github.com/Quocker22/facebook-ambient-light"
+}
