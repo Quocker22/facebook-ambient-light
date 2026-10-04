@@ -249,7 +249,23 @@
   // Positions are refreshed on each scan and on resize, not every frame:
   // all glows live in containers that scroll with their media.
   const layoutAll = () => {
-    if (pageLayer?.isConnected) pageLayer.style.height = `${document.documentElement.scrollHeight}px`;
+    if (pageLayer?.isConnected) {
+      // Height of Facebook's own content, not document.scrollHeight: that one
+      // includes this layer, so the layer could never shrink again. When the
+      // photo viewer or a popup opens, Facebook pins the feed (position:
+      // fixed) and the page becomes one screen tall; a stale tall layer kept
+      // the page scrollable into empty black space.
+      let height = 0;
+      if (document.documentElement.dataset.fbAmbient === 'feed') {
+        for (const el of document.body.children) {
+          if (el === pageLayer || el.id?.startsWith('fb-ambient')) continue;
+          const r = el.getBoundingClientRect();
+          if (r.height) height = Math.max(height, r.bottom + scrollY);
+        }
+      }
+      const value = `${Math.round(height)}px`;
+      if (pageLayer.style.height !== value) pageLayer.style.height = value;
+    }
     for (const glow of glows.values()) {
       try {
         layout(glow);
