@@ -141,14 +141,15 @@
     noise.style.display = S.debanding ? '' : 'none'; // no layer at all when off
   };
 
-  // Bars are fully replaced by light (opacity 1), otherwise the black
-  // layers behind would show through.
+  // Bar fills look exactly like the feed glow around the post (same blur,
+  // opacity, colors and readability dimming), so the light inside the bars
+  // and outside the post read as one continuous glow.
   const glowOpacity = (mode) =>
-    mode === 'fill' || mode === 'inner' ? 1 : mode === 'stage' ? S.stageOpacity / 100 : S.opacity / 100;
+    mode === 'inner' ? 1 : mode === 'stage' ? S.stageOpacity / 100 : S.opacity / 100;
 
   const GLOW_BLUR = {
     stage: () => S.stageBlur,
-    fill: () => S.fillBlur,
+    fill: () => S.blur,
     inner: () => 0, // a mask over the photo: must stay sharp
     page: () => S.blur,
   };
@@ -160,9 +161,11 @@
   // stays under a cap (dark theme) or above a floor (light theme).
   const isLightTheme = () => document.documentElement.classList.contains('__fb-light-mode');
   const readabilityFactor = (glow) => {
-    if (!S.readability || glow.mode !== 'page' || glow.lum == null) return 1;
+    // A bar fill follows its post's feed glow, which holds the measurement.
+    const measured = glow.mode === 'fill' ? glows.get(keyOf(glow.media, 'page')) : glow;
+    if (!S.readability || (glow.mode !== 'page' && glow.mode !== 'fill') || measured?.lum == null) return 1;
     const strength = S.readabilityStrength / 100;
-    const lit = glow.lum * (S.brightness / 100) * (S.opacity / 100);
+    const lit = measured.lum * (S.brightness / 100) * (S.opacity / 100);
     if (isLightTheme()) {
       const floor = 0.45 + 0.35 * strength;
       return lit >= floor ? 1 : Math.min(2, floor / Math.max(lit, 0.05));
@@ -192,6 +195,8 @@
     if (Math.abs(k - (glow.readK ?? 1)) > 0.04) {
       glow.readK = k;
       applyGlowStyle(glow);
+      const fill = glows.get(keyOf(glow.media, 'fill'));
+      if (fill) applyGlowStyle(fill);
     }
   };
 
@@ -244,8 +249,14 @@
     } else if (mode === 'fill') {
       const box = document.createElement('div');
       box.className = 'fb-ambient-fill';
-      Object.assign(box.style, { position: 'absolute', overflow: 'hidden', pointerEvents: 'none' });
-      Object.assign(canvas.style, { left: '-15%', top: '-15%', width: '130%', height: '130%' });
+      // Same backdrop as the page under the feed glow, so the same opacity
+      // gives the same color in the bars as beside the post.
+      Object.assign(box.style, {
+        position: 'absolute',
+        overflow: 'hidden',
+        pointerEvents: 'none',
+        backgroundColor: getComputedStyle(document.body).backgroundColor,
+      });
       box.append(canvas);
       if (media.tagName === 'IMG') {
         // Photo bars are a solid color (the photo's main color) painted on
@@ -362,8 +373,13 @@
       placeCanvas(canvas, m.left - p.left, m.top - p.top, m.width, m.height);
     } else if (mode === 'fill') {
       sizeSample(glow, m.width, m.height);
-      if (glow.inFrame) return; // fills the frame via CSS
       const f = glow.frame.getBoundingClientRect();
+      // The very same glow as around the post (same size and position on
+      // screen), only clipped to the bars: no seam between inside and outside.
+      const gw = (m.width * S.spread) / 100;
+      const gh = m.height + 2 * Math.max(S.reach, m.height * 0.25);
+      placeCanvas(canvas, m.left - f.left - (gw - m.width) / 2, m.top - f.top - (gh - m.height) / 2, gw, gh);
+      if (glow.inFrame) return; // the box fills the frame via CSS
       // Cut a hole where the video picture is (object-fit: contain), so the
       // light only covers the bars: it can be shown before the video plays
       // without hiding Facebook's poster image.

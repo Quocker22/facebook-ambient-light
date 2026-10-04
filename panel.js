@@ -151,7 +151,6 @@
 
   // Settings that only matter when another one is on.
   const DEPENDS = {
-    fillBlur: 'fillBars',
     topBarOpacity: 'topBarLit',
     cardOpacity: 'cardsLit',
     readabilityStrength: 'readability',

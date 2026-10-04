@@ -55,7 +55,6 @@
       title: 'Remove black & colored bars',
       items: [
         { key: 'fillBars', label: 'Light up bars around media', type: 'toggle', default: true, help: 'Replaces the black/white bars beside photos and videos in the feed with light.' },
-        { key: 'fillBlur', label: 'Bars blur', type: 'range', min: 0, max: 100, step: 1, default: 40, format: px },
         { key: 'innerBars', label: 'Light up bars inside photos', type: 'toggle', default: true, help: 'Black, white or colored background baked into the photo itself (collages, padded photos) becomes light. Screenshots and text on a flat background are left alone.' },
         { key: 'innerTolerance', label: 'Bar color tolerance', type: 'range', min: 5, max: 80, step: 1, default: 20, format: (v) => String(v), help: 'How close a pixel must be to the bar color. Higher catches noisy bars but may eat into dark photo edges.' },
       ],
