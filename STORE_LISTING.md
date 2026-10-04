@@ -51,4 +51,5 @@ Facebook is a trademark of Meta Platforms, Inc. This extension is not affiliated
 ## Images to upload
 - Icon 128×128: images/icon-128.png (inside the package)
 - Small promo tile 440×280: store/promo-440x280.png
+- Marquee promo tile 1400×560: store/marquee-1400x560.png
 - Screenshots 1280×800 (1–5): take your own, see below
