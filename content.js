@@ -175,36 +175,41 @@
   };
   let lastLightTheme = null;
   const LUM_EVERY_VIDEO_FRAMES = 15;
-  const measureLight = (glow) => {
+  // Brightness of the media itself, from an 8x8 copy (the glow canvas holds
+  // the already adjusted light, so it cannot be measured).
+  const lumCanvas = document.createElement('canvas');
+  lumCanvas.width = lumCanvas.height = 8;
+  const lumCtx = lumCanvas.getContext('2d', { willReadFrequently: true });
+  const measureLight = (glow, source) => {
     if (glow.mode !== 'page' || !S.readability) return;
     if (glow.media.tagName === 'VIDEO' && (glow.lumFrames = (glow.lumFrames ?? 0) + 1) % LUM_EVERY_VIDEO_FRAMES !== 1) return;
     try {
-      const { width: w, height: h } = glow.canvas;
-      const d = glow.ctx.getImageData(0, 0, w, h).data;
+      lumCtx.clearRect(0, 0, 8, 8);
+      lumCtx.drawImage(source, 0, 0, 8, 8);
+      const d = lumCtx.getImageData(0, 0, 8, 8).data;
       let sum = 0;
-      let n = 0;
-      for (let i = 0; i < d.length; i += 16) {
-        sum += 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
-        n++;
-      }
-      glow.lum = sum / n / 255;
+      for (let i = 0; i < d.length; i += 4) sum += 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
+      glow.lum = sum / 64 / 255;
     } catch {
-      glow.lum = null; // unreadable (tainted) canvas: leave it as is
-    }
-    const k = readabilityFactor(glow);
-    if (Math.abs(k - (glow.readK ?? 1)) > 0.04) {
-      glow.readK = k;
-      applyGlowStyle(glow);
-      const fill = glows.get(keyOf(glow.media, 'fill'));
-      if (fill) applyGlowStyle(fill);
+      glow.lum = null; // unreadable (tainted) source: leave it as is
     }
   };
 
+  // Glows are blurred and color-adjusted once, inside their small sample
+  // canvas (see bakeRect/paint), and only scaled up by the browser. A CSS
+  // filter: blur() on large layers was re-applied by the GPU on every frame
+  // while scrolling (measured: GPU process ~2x busier than without the
+  // extension during trackpad scrolling).
+  const BAKED = { stage: true, fill: true, page: true };
+  const bakedFilter = (glow) =>
+    `blur(${glow.bake.blur}px) saturate(${S.saturation / 100}) ` +
+    `brightness(${(S.brightness / 100) * readabilityFactor(glow)}) contrast(${S.contrast / 100})`;
+
   const applyGlowStyle = (glow) => {
     const { canvas, mode } = glow;
-    canvas.style.filter =
-      `blur(${GLOW_BLUR[mode]()}px) saturate(${S.saturation / 100}) ` +
-      `brightness(${(S.brightness / 100) * readabilityFactor(glow)}) contrast(${S.contrast / 100})`;
+    canvas.style.filter = BAKED[mode]
+      ? ''
+      : `saturate(${S.saturation / 100}) brightness(${S.brightness / 100}) contrast(${S.contrast / 100})`;
     canvas.style.transition = `opacity ${S.fadeIn}ms ease-out`;
     if (glow.shown) canvas.style.opacity = String(glowOpacity(mode));
   };
@@ -234,8 +239,7 @@
       mode,
       canvas,
       root: canvas, // element removed on cleanup
-      // Page glows are read back (readability), so keep them on the CPU.
-      ctx: canvas.getContext('2d', { willReadFrequently: mode === 'page' }),
+      ctx: canvas.getContext('2d'),
       restore: [],
       ...extra,
     };
@@ -339,23 +343,42 @@
     for (const [el, prop, value] of glow.restore.reverse()) if (!inUse(el)) el.style[prop] = value;
   };
 
-  const sizeSample = (glow, w, h) => {
-    const { canvas } = glow;
-    const sw = S.resolution;
-    const sh = Math.max(1, Math.round((sw * h) / w));
-    if (canvas.width !== sw || canvas.height !== sh) {
-      canvas.width = sw;
-      canvas.height = sh;
-      glow.drawnSrc = null; // resizing clears the canvas
-      glow.drawnTime = null;
-    }
-  };
-
   const placeCanvas = (canvas, left, top, w, h) => {
     canvas.style.left = `${left}px`;
     canvas.style.top = `${top}px`;
     canvas.style.width = `${w}px`;
     canvas.style.height = `${h}px`;
+  };
+
+  // Sizes a baked glow: the canvas holds the media at sample resolution plus
+  // a transparent margin wide enough for the blur to fade out, and is placed
+  // so the media part covers (left, top, w, h) on screen.
+  const bakeRect = (glow, left, top, w, h) => {
+    const scale = S.resolution / Math.max(1, w); // sample px per CSS px
+    const blur = GLOW_BLUR[glow.mode]() * scale;
+    const pad = Math.ceil(blur * 2.5) + 1;
+    const iw = S.resolution;
+    const ih = Math.max(1, Math.round(h * scale));
+    const { canvas } = glow;
+    if (canvas.width !== iw + 2 * pad || canvas.height !== ih + 2 * pad) {
+      canvas.width = iw + 2 * pad;
+      canvas.height = ih + 2 * pad;
+      glow.drawnKey = null; // resizing clears the canvas
+      glow.drawnTime = null;
+    }
+    glow.bake = { pad, iw, ih, blur };
+    placeCanvas(canvas, left - pad / scale, top - pad / scale, canvas.width / scale, canvas.height / scale);
+  };
+
+  const paint = (glow, source, alpha = 1) => {
+    const { ctx, canvas } = glow;
+    const { pad, iw, ih } = glow.bake;
+    if (alpha >= 1) ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.filter = bakedFilter(glow);
+    ctx.globalAlpha = alpha;
+    ctx.drawImage(source, pad, pad, iw, ih);
+    ctx.globalAlpha = 1;
+    ctx.filter = 'none';
   };
 
   const layout = timed('layout', (glow) => {
@@ -366,19 +389,17 @@
       const s = glow.stage.getBoundingClientRect();
       const w = s.width * 1.2;
       const h = s.height * 1.2;
-      placeCanvas(canvas, (s.width - w) / 2 + glow.stage.scrollLeft, (s.height - h) / 2 + glow.stage.scrollTop, w, h);
-      sizeSample(glow, m.width, m.height);
+      bakeRect(glow, (s.width - w) / 2 + glow.stage.scrollLeft, (s.height - h) / 2 + glow.stage.scrollTop, w, h);
     } else if (mode === 'inner') {
       const p = media.parentElement.getBoundingClientRect();
       placeCanvas(canvas, m.left - p.left, m.top - p.top, m.width, m.height);
     } else if (mode === 'fill') {
-      sizeSample(glow, m.width, m.height);
       const f = glow.frame.getBoundingClientRect();
       // The very same glow as around the post (same size and position on
       // screen), only clipped to the bars: no seam between inside and outside.
       const gw = (m.width * S.spread) / 100;
       const gh = m.height + 2 * Math.max(S.reach, m.height * 0.25);
-      placeCanvas(canvas, m.left - f.left - (gw - m.width) / 2, m.top - f.top - (gh - m.height) / 2, gw, gh);
+      bakeRect(glow, m.left - f.left - (gw - m.width) / 2, m.top - f.top - (gh - m.height) / 2, gw, gh);
       if (glow.inFrame) return; // the box fills the frame via CSS
       // Cut a hole where the video picture is (object-fit: contain), so the
       // light only covers the bars: it can be shown before the video plays
@@ -399,14 +420,12 @@
       box.style.top = `${f.top - p.top}px`;
       box.style.width = `${f.width}px`;
       box.style.height = `${f.height}px`;
-      sizeSample(glow, m.width, m.height);
     } else {
       // Taller than the media so the light reaches the card's header
       // (author, caption) and footer (like bar), and the top nav bar.
       const w = (m.width * S.spread) / 100;
       const h = m.height + 2 * Math.max(S.reach, m.height * 0.25);
-      placeCanvas(canvas, m.left + scrollX - (w - m.width) / 2, m.top + scrollY - (h - m.height) / 2, w, h);
-      sizeSample(glow, m.width, m.height);
+      bakeRect(glow, m.left + scrollX - (w - m.width) / 2, m.top + scrollY - (h - m.height) / 2, w, h);
     }
   });
 
@@ -429,10 +448,16 @@
     const { media } = glow;
     const src = media.currentSrc || media.src;
     const img = loadImage(src);
-    if (!img.complete || !img.naturalWidth || glow.drawnSrc === src) return; // static: draw once
-    glow.ctx.drawImage(img, 0, 0, glow.canvas.width, glow.canvas.height);
-    glow.drawnSrc = src;
-    measureLight(glow);
+    if (!img.complete || !img.naturalWidth || !glow.bake) return;
+    if (glow.lumSrc !== src) {
+      glow.lumSrc = src;
+      measureLight(glow, img);
+    }
+    // Static: drawn once, and again only when the size or a setting changed.
+    const key = `${src}|${bakedFilter(glow)}`;
+    if (glow.drawnKey === key) return;
+    paint(glow, img);
+    glow.drawnKey = key;
     fadeIn(glow);
   });
 
@@ -725,7 +750,7 @@
   };
 
   const drawVideo = timed('drawVideo', (glow) => {
-    const { media, ctx, canvas } = glow;
+    const { media } = glow;
     if (media.readyState < 2) return;
     // A paused video still gets a few draws so smooth motion settles on
     // the paused frame.
@@ -738,12 +763,11 @@
     // Smooth motion (frame blending): mix the new frame into the previous
     // one instead of replacing it, so the light does not flicker.
     // Not right after a resize, which cleared the canvas.
+    if (!glow.bake) return;
+    measureLight(glow, media);
     const blend = S.smoothMotion && glow.drawnTime != null ? 1 - S.smoothStrength / 100 : 1;
-    ctx.globalAlpha = blend;
-    ctx.drawImage(media, 0, 0, canvas.width, canvas.height);
-    ctx.globalAlpha = 1;
+    paint(glow, media, blend);
     glow.drawnTime = media.currentTime;
-    measureLight(glow);
     fadeIn(glow);
   });
 
