@@ -688,6 +688,7 @@
     if (document.documentElement.dataset.fbAmbient !== ambientMode) document.documentElement.dataset.fbAmbient = ambientMode;
     applyCardVar();
     if (S.focusMode) markSides();
+    if (S.cardsLit && S.textShadow) markBigText();
     if (stagePick) {
       want(stagePick.media, 'stage', { stage: stagePick.stage });
       if (S.innerBars && stagePick.media.tagName === 'IMG') want(stagePick.media, 'inner');
@@ -838,7 +839,27 @@
     return [
       `${text('dark')} { text-shadow: 0 0 6px rgba(0, 0, 0, ${a}), 0 0 2px rgba(0, 0, 0, ${a}); }`,
       `${text('light')} { text-shadow: 0 0 6px rgba(255, 255, 255, ${a}), 0 0 2px rgba(255, 255, 255, ${a}); }`,
+      // Explicit "none": text-shadow is inherited, so excluding the element
+      // from the rule above would not be enough.
+      `[data-fb-ambient-text] [${BIG_TEXT_ATTR}] { text-shadow: none !important; }`,
     ].join('\n');
+  };
+
+  // Large text is the body of text-on-color posts (big text on its own
+  // colored background): a shadow there only smears it. Post header, caption
+  // and like bar text, which sit on the lit card, are ~15 px. Each text node
+  // is checked once, so this costs nothing while scrolling.
+  const BIG_TEXT_ATTR = 'data-fb-ambient-big';
+  const BIG_TEXT_PX = 20;
+  const textChecked = new WeakSet();
+  const markBigText = () => {
+    const main = document.querySelector('[role=main]');
+    if (!main) return;
+    for (const t of main.querySelectorAll('[dir=auto]')) {
+      if (textChecked.has(t)) continue;
+      textChecked.add(t);
+      if (parseFloat(getComputedStyle(t).fontSize) >= BIG_TEXT_PX) t.setAttribute(BIG_TEXT_ATTR, '');
+    }
   };
 
   // Feed cards: the variable is set inline on the feed element, not with a
@@ -891,6 +912,7 @@
     surfaceStyle?.remove();
     pageLayer?.remove();
     for (const el of document.querySelectorAll(`[${SIDE_ATTR}]`)) el.removeAttribute(SIDE_ATTR);
+    for (const el of document.querySelectorAll(`[${BIG_TEXT_ATTR}]`)) el.removeAttribute(BIG_TEXT_ATTR);
     cardMain?.style.removeProperty('--card-background');
     cardMain?.removeAttribute('data-fb-ambient-text');
     delete document.documentElement.dataset.fbAmbient;
