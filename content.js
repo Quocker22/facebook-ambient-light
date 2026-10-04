@@ -657,43 +657,34 @@
   });
 
   // Analysing a photo takes ~10-40 ms of main thread. Facebook's CSP blocks
-  // Web Workers, so instead it waits until the page is idle and scrolling
-  // has stopped, one photo per idle slot: a frame is never blocked while
-  // scrolling (measured: 5-8 long tasks per scroll before).
-  const SCROLL_QUIET_MS = 200;
+  // Web Workers, so it runs on the main thread, one photo per turn, and only
+  // once scrolling has paused, so a scroll is never interrupted.
+  // Plain timers, not requestIdleCallback: on Facebook (autoplaying videos)
+  // and in background tabs idle callbacks may never come (measured: 0 runs
+  // in 10 s, photos stayed unanalysed).
+  const SCROLL_QUIET_MS = 300;
   let lastScroll = 0;
   addEventListener('scroll', () => (lastScroll = performance.now()), { capture: true, passive: true });
   const innerQueue = new Map(); // key -> src
-  let innerPumping = false;
+  let pumpTimer = 0;
   const queueInner = (key, src) => {
     if (innerQueue.has(key)) return;
     innerQueue.set(key, src);
     // Long fast scrolls: only the latest photos still matter.
     if (innerQueue.size > 20) innerQueue.delete(innerQueue.keys().next().value);
-    if (!innerPumping) schedulePump();
+    schedulePump(SCROLL_QUIET_MS);
   };
-  const schedulePump = () => {
-    innerPumping = true;
-    requestIdleCallback(pumpInner, { timeout: 2000 });
+  const schedulePump = (delay) => {
+    if (!pumpTimer) pumpTimer = setTimeout(pumpInner, delay);
   };
-  let pumpWaitingSince = null;
-  const pumpStats = { runs: 0, notQuiet: 0, noTime: 0, waitingDownload: 0, built: 0 };
-  const pumpInner = (deadline) => {
+  const pumpStats = { runs: 0, notQuiet: 0, waitingDownload: 0, built: 0 };
+  const pumpInner = () => {
+    pumpTimer = 0;
     pumpStats.runs++;
     const quiet = performance.now() - lastScroll;
-    // Facebook is almost never idle for long (autoplaying videos): idle
-    // slots are usually under 8 ms, and they come often enough that the idle
-    // timeout never fires either (measured: 26 of 26 runs deferred, nothing
-    // analysed). So once a job has waited a second, it runs anyway; it still
-    // never runs while the user is scrolling.
-    const now = performance.now();
-    pumpWaitingSince ??= now;
-    const hasTime = deadline.didTimeout || deadline.timeRemaining() >= 8 || now - pumpWaitingSince > 1000;
-    if (quiet < SCROLL_QUIET_MS || !hasTime) {
-      if (quiet < SCROLL_QUIET_MS) pumpStats.notQuiet++;
-      else pumpStats.noTime++;
-      setTimeout(schedulePump, Math.max(16, SCROLL_QUIET_MS - quiet));
-      return;
+    if (quiet < SCROLL_QUIET_MS) {
+      pumpStats.notQuiet++;
+      return schedulePump(SCROLL_QUIET_MS - quiet + 10);
     }
     for (const [key, src] of innerQueue) {
       const img = loadImage(src);
@@ -704,19 +695,17 @@
       innerQueue.delete(key);
       innerCache.set(key, img.naturalWidth ? buildInner(img) : null);
       pumpStats.built++;
-      pumpWaitingSince = null;
       if (innerCache.size > 100) innerCache.delete(innerCache.keys().next().value);
-      break; // one per idle slot
+      break; // one per turn, so a frame can render in between
     }
-    if (innerQueue.size) setTimeout(schedulePump, 16);
-    else innerPumping = false;
+    if (innerQueue.size) schedulePump(50);
   };
 
   // Read-only view of the analysis queue for debugging (devtools / tests).
   globalThis.FBAmbient.debug = {
     innerQueue: () => [...innerQueue.keys()].map((k) => k.slice(0, 60)),
     innerCached: () => innerCache.size,
-    innerPumping: () => innerPumping,
+    innerPumping: () => !!pumpTimer,
     pumpStats: () => ({ ...pumpStats, lastScrollMsAgo: Math.round(performance.now() - lastScroll) }),
   };
 
