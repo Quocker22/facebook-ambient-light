@@ -506,24 +506,64 @@
       return dr * dr + dg * dg + db * db <= tol2;
     };
     const bg = new Uint8Array(w * h);
-    const stack = edge.filter(near);
-    for (const i of stack) bg[i] = 1;
-    let count = stack.length;
-    while (stack.length) {
-      const i = stack.pop();
-      const x = i % w;
-      for (const j of [i - w, i + w, x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1]) {
-        if (j < 0 || j >= w * h || bg[j] || !near(j)) continue;
-        bg[j] = 1;
-        count++;
-        stack.push(j);
+
+    // 1) Straight bars along the edges (pillarbox / letterbox baked into the
+    //    photo), found column by column / row by row like the original's
+    //    black-bar detection. Dark parts of the photo touching a bar cannot
+    //    leak into it this way, which defeats the flood fill below.
+    const BAR_COVERAGE = 0.97;
+    const columnIsBar = (x) => {
+      let hits = 0;
+      for (let y = 0; y < h; y++) if (near(y * w + x)) hits++;
+      return hits >= h * BAR_COVERAGE;
+    };
+    const rowIsBar = (y) => {
+      let hits = 0;
+      for (let x = 0; x < w; x++) if (near(y * w + x)) hits++;
+      return hits >= w * BAR_COVERAGE;
+    };
+    let left = 0, right = 0, top = 0, bottom = 0;
+    while (left < w / 2 && columnIsBar(left)) left++;
+    while (right < w / 2 && columnIsBar(w - 1 - right)) right++;
+    while (top < h / 2 && rowIsBar(top)) top++;
+    while (bottom < h / 2 && rowIsBar(h - 1 - bottom)) bottom++;
+    const minW = w * 0.03, minH = h * 0.03;
+    const sideBars = left >= minW && right >= minW;
+    const topBars = top >= minH && bottom >= minH;
+    let count = 0;
+    if ((sideBars || topBars) && left + right < w * 0.9 && top + bottom < h * 0.9) {
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          if ((sideBars && (x < left || x >= w - right)) || (topBars && (y < top || y >= h - bottom))) {
+            bg[y * w + x] = 1;
+            count++;
+          }
+        }
       }
     }
-    // Too little to bother. And bars around photos are a minority of the
-    // image (collages ~30-45%); when the flat color is most of it, it is a
-    // screenshot or graphic whose background is content, not bars.
-    if (count < w * h * 0.03 || count > w * h * 0.55) return null;
-    if (!looksLikeBars(bg, w, h)) return null;
+
+    // 2) Otherwise, a solid background around several photos (collages):
+    //    flood fill from the edges through pixels close to the bar color.
+    if (!count) {
+      const stack = edge.filter(near);
+      for (const i of stack) bg[i] = 1;
+      count = stack.length;
+      while (stack.length) {
+        const i = stack.pop();
+        const x = i % w;
+        for (const j of [i - w, i + w, x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1]) {
+          if (j < 0 || j >= w * h || bg[j] || !near(j)) continue;
+          bg[j] = 1;
+          count++;
+          stack.push(j);
+        }
+      }
+      // Too little to bother. And bars around photos are a minority of the
+      // image (collages ~30-45%); when the flat color is most of it, it is a
+      // screenshot or graphic whose background is content, not bars.
+      if (count < w * h * 0.03 || count > w * h * 0.55) return null;
+      if (!looksLikeBars(bg, w, h)) return null;
+    }
     // Grow by one pixel: edge pixels mix photo and bar color and would
     // otherwise stay as a dark jagged outline around each photo.
     const grown = bg.slice();
@@ -595,22 +635,48 @@
     innerPumping = true;
     requestIdleCallback(pumpInner, { timeout: 2000 });
   };
+  let pumpWaitingSince = null;
+  const pumpStats = { runs: 0, notQuiet: 0, noTime: 0, waitingDownload: 0, built: 0 };
   const pumpInner = (deadline) => {
+    pumpStats.runs++;
     const quiet = performance.now() - lastScroll;
-    if (quiet < SCROLL_QUIET_MS || deadline.timeRemaining() < 8) {
+    // Facebook is almost never idle for long (autoplaying videos): idle
+    // slots are usually under 8 ms, and they come often enough that the idle
+    // timeout never fires either (measured: 26 of 26 runs deferred, nothing
+    // analysed). So once a job has waited a second, it runs anyway; it still
+    // never runs while the user is scrolling.
+    const now = performance.now();
+    pumpWaitingSince ??= now;
+    const hasTime = deadline.didTimeout || deadline.timeRemaining() >= 8 || now - pumpWaitingSince > 1000;
+    if (quiet < SCROLL_QUIET_MS || !hasTime) {
+      if (quiet < SCROLL_QUIET_MS) pumpStats.notQuiet++;
+      else pumpStats.noTime++;
       setTimeout(schedulePump, Math.max(16, SCROLL_QUIET_MS - quiet));
       return;
     }
     for (const [key, src] of innerQueue) {
       const img = loadImage(src);
-      if (!img.complete) continue; // still downloading; try the next one
+      if (!img.complete) {
+        pumpStats.waitingDownload++;
+        continue; // still downloading; try the next one
+      }
       innerQueue.delete(key);
       innerCache.set(key, img.naturalWidth ? buildInner(img) : null);
+      pumpStats.built++;
+      pumpWaitingSince = null;
       if (innerCache.size > 100) innerCache.delete(innerCache.keys().next().value);
       break; // one per idle slot
     }
     if (innerQueue.size) setTimeout(schedulePump, 16);
     else innerPumping = false;
+  };
+
+  // Read-only view of the analysis queue for debugging (devtools / tests).
+  globalThis.FBAmbient.debug = {
+    innerQueue: () => [...innerQueue.keys()].map((k) => k.slice(0, 60)),
+    innerCached: () => innerCache.size,
+    innerPumping: () => innerPumping,
+    pumpStats: () => ({ ...pumpStats, lastScrollMsAgo: Math.round(performance.now() - lastScroll) }),
   };
 
   const drawInner = timed('drawInner', (glow) => {
@@ -669,7 +735,9 @@
   const tick = timed('tick', () => {
     if (stopped) return;
     for (const glow of [...glows.values()]) {
-      if (!glow.media.isConnected || (glow.stage && !glow.stage.isConnected) || (glow.box && !glow.box.isConnected)) {
+      // Also our own element: Facebook's re-render can drop it while the
+      // media stays, which left a dead glow that was never recreated.
+      if (!glow.media.isConnected || !glow.root.isConnected || (glow.stage && !glow.stage.isConnected) || (glow.box && !glow.box.isConnected)) {
         removeGlow(glow);
         continue;
       }
