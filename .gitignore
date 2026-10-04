@@ -4,3 +4,5 @@ dist/
 # Local logo tooling: embeds third-party SVG sets, kept out of the repo
 store/icon-picker.html
 store/build_picker.py
+# Store screenshots show other people's posts: upload to the store only, never commit
+store/screenshots/
