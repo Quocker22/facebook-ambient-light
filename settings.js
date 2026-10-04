@@ -72,6 +72,8 @@
       items: [
         { key: 'cardsLit', label: 'Light up posts', type: 'toggle', default: true, help: 'Post header (author, caption) and like bar are lit like the sides.' },
         { key: 'cardOpacity', label: 'Post background opacity', type: 'range', min: 0, max: 100, step: 1, default: 10, format: pct },
+        { key: 'readability', label: 'Keep text readable', type: 'toggle', default: true, help: 'Dims light that is too bright behind white text (dark theme), or brightens light that is too dark behind black text (light theme).' },
+        { key: 'readabilityStrength', label: 'Readability strength', type: 'range', min: 0, max: 100, step: 1, default: 50, format: pct, help: 'Higher keeps text easier to read; lower keeps the light more vivid.' },
         { key: 'textShadow', label: 'Text shadow', type: 'range', min: 0, max: 100, step: 1, default: 40, format: pct, help: 'Shadow behind feed text so it stays readable on bright light.' },
       ],
     },

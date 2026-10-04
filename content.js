@@ -153,11 +153,53 @@
     page: () => S.blur,
   };
 
+  // Keep text readable: white text (dark theme) on a very bright glow, or
+  // dark text (light theme) on a very dark one, is hard to read through the
+  // see-through posts. Each feed glow's average brightness is measured from
+  // its small sample canvas and its CSS brightness is scaled so the light
+  // stays under a cap (dark theme) or above a floor (light theme).
+  const isLightTheme = () => document.documentElement.classList.contains('__fb-light-mode');
+  const readabilityFactor = (glow) => {
+    if (!S.readability || glow.mode !== 'page' || glow.lum == null) return 1;
+    const strength = S.readabilityStrength / 100;
+    const lit = glow.lum * (S.brightness / 100) * (S.opacity / 100);
+    if (isLightTheme()) {
+      const floor = 0.45 + 0.35 * strength;
+      return lit >= floor ? 1 : Math.min(2, floor / Math.max(lit, 0.05));
+    }
+    const cap = 0.55 - 0.4 * strength;
+    return lit <= cap ? 1 : cap / lit;
+  };
+  let lastLightTheme = null;
+  const LUM_EVERY_VIDEO_FRAMES = 15;
+  const measureLight = (glow) => {
+    if (glow.mode !== 'page' || !S.readability) return;
+    if (glow.media.tagName === 'VIDEO' && (glow.lumFrames = (glow.lumFrames ?? 0) + 1) % LUM_EVERY_VIDEO_FRAMES !== 1) return;
+    try {
+      const { width: w, height: h } = glow.canvas;
+      const d = glow.ctx.getImageData(0, 0, w, h).data;
+      let sum = 0;
+      let n = 0;
+      for (let i = 0; i < d.length; i += 16) {
+        sum += 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
+        n++;
+      }
+      glow.lum = sum / n / 255;
+    } catch {
+      glow.lum = null; // unreadable (tainted) canvas: leave it as is
+    }
+    const k = readabilityFactor(glow);
+    if (Math.abs(k - (glow.readK ?? 1)) > 0.04) {
+      glow.readK = k;
+      applyGlowStyle(glow);
+    }
+  };
+
   const applyGlowStyle = (glow) => {
     const { canvas, mode } = glow;
     canvas.style.filter =
       `blur(${GLOW_BLUR[mode]()}px) saturate(${S.saturation / 100}) ` +
-      `brightness(${S.brightness / 100}) contrast(${S.contrast / 100})`;
+      `brightness(${(S.brightness / 100) * readabilityFactor(glow)}) contrast(${S.contrast / 100})`;
     canvas.style.transition = `opacity ${S.fadeIn}ms ease-out`;
     if (glow.shown) canvas.style.opacity = String(glowOpacity(mode));
   };
@@ -187,7 +229,8 @@
       mode,
       canvas,
       root: canvas, // element removed on cleanup
-      ctx: canvas.getContext('2d'),
+      // Page glows are read back (readability), so keep them on the CPU.
+      ctx: canvas.getContext('2d', { willReadFrequently: mode === 'page' }),
       restore: [],
       ...extra,
     };
@@ -373,6 +416,7 @@
     if (!img.complete || !img.naturalWidth || glow.drawnSrc === src) return; // static: draw once
     glow.ctx.drawImage(img, 0, 0, glow.canvas.width, glow.canvas.height);
     glow.drawnSrc = src;
+    measureLight(glow);
     fadeIn(glow);
   });
 
@@ -617,6 +661,7 @@
     ctx.drawImage(media, 0, 0, canvas.width, canvas.height);
     ctx.globalAlpha = 1;
     glow.drawnTime = media.currentTime;
+    measureLight(glow);
     fadeIn(glow);
   });
 
@@ -688,6 +733,12 @@
     if (document.documentElement.dataset.fbAmbient !== ambientMode) document.documentElement.dataset.fbAmbient = ambientMode;
     applyCardVar();
     if (S.focusMode) markSides();
+    // Facebook theme switched: readability works the other way round.
+    const light = isLightTheme();
+    if (light !== lastLightTheme) {
+      lastLightTheme = light;
+      for (const glow of glows.values()) applyGlowStyle(glow);
+    }
     if (S.cardsLit && S.textShadow) markBigText();
     if (stagePick) {
       want(stagePick.media, 'stage', { stage: stagePick.stage });

@@ -154,6 +154,7 @@
     fillBlur: 'fillBars',
     topBarOpacity: 'topBarLit',
     cardOpacity: 'cardsLit',
+    readabilityStrength: 'readability',
     smoothStrength: 'smoothMotion',
     innerTolerance: 'innerBars',
     focusBlur: 'focusMode',
