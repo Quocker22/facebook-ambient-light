@@ -221,12 +221,6 @@
       position: 'absolute',
       pointerEvents: 'none',
       opacity: '0', // faded in after the first draw
-      // Own compositor layer: the GPU scales it up with smooth (bilinear)
-      // filtering. Painted into the page's layer instead, Chrome sometimes
-      // scaled the small canvas with blocky pixels (seen beside the feed
-      // until something forced a repaint).
-      willChange: 'transform',
-      imageRendering: 'auto',
     });
     return canvas;
   };
