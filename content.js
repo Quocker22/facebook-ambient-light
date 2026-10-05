@@ -353,16 +353,11 @@
   // Sizes a baked glow: the canvas holds the media at sample resolution plus
   // a transparent margin wide enough for the blur to fade out, and is placed
   // so the media part covers (left, top, w, h) on screen.
-  // Upscaled more than ~6x, the browser's linear interpolation shows as
-  // vertical/horizontal streaks (seen with 74 px canvases stretched to
-  // 1000 px), so the baked canvas gets at least 1/6 of the on-screen size.
-  const MAX_UPSCALE = 6;
-  const MAX_BAKE_W = 256;
   const bakeRect = (glow, left, top, w, h) => {
-    const iw = Math.round(Math.min(MAX_BAKE_W, Math.max(S.resolution, w / MAX_UPSCALE)));
-    const scale = iw / Math.max(1, w); // sample px per CSS px
+    const scale = S.resolution / Math.max(1, w); // sample px per CSS px
     const blur = GLOW_BLUR[glow.mode]() * scale;
     const pad = Math.ceil(blur * 2.5) + 1;
+    const iw = S.resolution;
     const ih = Math.max(1, Math.round(h * scale));
     const { canvas } = glow;
     if (canvas.width !== iw + 2 * pad || canvas.height !== ih + 2 * pad) {

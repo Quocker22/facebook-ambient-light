@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Ambient light for Facebook™",
   "description": "Ambient glow behind photos and videos on Facebook, with a focus mode and detailed settings. Not affiliated with Meta.",
-  "version": "1.0.8",
+  "version": "1.0.7",
   "content_scripts": [
     {
       "matches": [
